@@ -157,6 +157,15 @@
   font-size: 0;
 }
 
+/* El swatch cerrado se ve como un cuadradito de color (font-size/color en 0 arriba lo logran),
+ * pero esas mismas reglas se heredan en la lista desplegada nativa si no se resetean acá,
+ * dejando las opciones ilegibles (texto invisible, todas del mismo color de fondo). */
+.color-swatch-select option {
+  color: var(--ink-900);
+  background-color: var(--paper);
+  font-size: 13px;
+}
+
 .milestone-dot {
   display: inline-block;
   width: 8px;
