@@ -1,0 +1,519 @@
+import { addDays, format, getISODay, getISOWeek } from 'date-fns';
+import { formatISODate, parseISODate, spanDays } from '../engine/dateMath';
+import { depthOf, isMilestoneTask, isSummaryTask } from '../engine/hierarchy';
+import type { ProjectSummary } from '../engine/projectSummary';
+import type { CalendarConfig, ProjectMeta, RubroPaletteEntry } from '../types/project';
+import type { LinkType, Task } from '../types/task';
+import { daysBetween } from '../components/gantt/ganttLayout';
+import {
+  FOOTER_HEIGHT_MM,
+  GUTTER_MM,
+  HEADER_HEIGHT_MM,
+  MARGIN_MM,
+  TABLE_HEADER_HEIGHT_MM,
+  TABLE_WIDTH_MM,
+  type TableColumn,
+} from './exportLayout';
+import { PRINT_COLORS } from './printColors';
+import { SVG_NS, fitFontSize, svgEl, textEl } from './svgBuilders';
+
+export interface BuildPageOptions {
+  pageWidthMm: number;
+  pageHeightMm: number;
+  tasks: Task[];
+  calendar: CalendarConfig;
+  palette: RubroPaletteEntry[];
+  meta: ProjectMeta;
+  summary: ProjectSummary;
+  tileIndex: number;
+  tileCount: number;
+  tileStartISO: string;
+  tileEndISO: string;
+  ganttAreaWidthMm: number;
+  mmPerDay: number;
+  showCriticalPath: boolean;
+  tableColumns: TableColumn[];
+}
+
+interface BarLayout {
+  x: number;
+  width: number;
+  y: number;
+}
+
+export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
+  const {
+    pageWidthMm,
+    pageHeightMm,
+    tasks,
+    calendar,
+    palette,
+    meta,
+    summary,
+    tileIndex,
+    tileCount,
+    tileStartISO,
+    tileEndISO,
+    ganttAreaWidthMm,
+    mmPerDay,
+    showCriticalPath,
+    tableColumns,
+  } = opts;
+
+  const colorByKey = new Map(palette.map((p) => [p.key, p.color]));
+  const bodyTop = MARGIN_MM + HEADER_HEIGHT_MM + GUTTER_MM;
+  const bodyBottom = pageHeightMm - MARGIN_MM - FOOTER_HEIGHT_MM - GUTTER_MM;
+  const headerRowY = bodyTop;
+  const rowsTop = bodyTop + TABLE_HEADER_HEIGHT_MM;
+  const availableRowsHeight = Math.max(bodyBottom - rowsTop, 0);
+  const rowHeightMm = tasks.length > 0 ? Math.min(6, Math.max(3, availableRowsHeight / tasks.length)) : 6;
+  const ganttX = MARGIN_MM + TABLE_WIDTH_MM + GUTTER_MM;
+
+  const svg = svgEl('svg', {
+    xmlns: SVG_NS,
+    width: `${pageWidthMm}mm`,
+    height: `${pageHeightMm}mm`,
+    viewBox: `0 0 ${pageWidthMm} ${pageHeightMm}`,
+  });
+
+  svg.appendChild(svgEl('rect', { x: 0, y: 0, width: pageWidthMm, height: pageHeightMm, fill: PRINT_COLORS.paper }));
+
+  const clipId = `gantt-clip-${tileIndex}`;
+  svg.appendChild(
+    svgEl('defs', {}, [
+      svgEl('clipPath', { id: clipId }, [
+        svgEl('rect', { x: ganttX, y: rowsTop, width: ganttAreaWidthMm, height: availableRowsHeight }),
+      ]),
+      ...columnClipPaths(tableColumns, tileIndex, rowsTop, availableRowsHeight),
+      arrowMarker('export-arrow', PRINT_COLORS.ink500),
+      arrowMarker('export-arrow-critical', PRINT_COLORS.accentCritical),
+    ]),
+  );
+
+  svg.appendChild(headerGroup(meta, summary, calendar, pageWidthMm));
+  svg.appendChild(tableHeaderRow(headerRowY, tableColumns));
+  svg.appendChild(timeScaleGroup(ganttX, headerRowY, ganttAreaWidthMm, TABLE_HEADER_HEIGHT_MM, tileStartISO, tileEndISO, mmPerDay));
+
+  if (!calendar.workOnWeekends) {
+    svg.appendChild(
+      weekendBandsGroup(ganttX, rowsTop, availableRowsHeight, tileStartISO, tileEndISO, mmPerDay, clipId),
+    );
+  }
+
+  const layout = new Map<string, BarLayout>();
+  tasks.forEach((t, i) => {
+    layout.set(t.uid, {
+      x: ganttX + daysBetween(tileStartISO, t.startDate) * mmPerDay,
+      width: Math.max((daysBetween(t.startDate, t.endDate) + 1) * mmPerDay, 1),
+      y: rowsTop + i * rowHeightMm,
+    });
+  });
+
+  const rowsGroup = svgEl('g');
+  tasks.forEach((task, i) => {
+    const y = rowsTop + i * rowHeightMm;
+    const summaryRow = isSummaryTask(tasks, task.uid);
+    const milestone = isMilestoneTask(tasks, task);
+    const depth = depthOf(tasks, task);
+
+    if (summaryRow) {
+      rowsGroup.appendChild(
+        svgEl('rect', { x: MARGIN_MM, y, width: pageWidthMm - MARGIN_MM * 2, height: rowHeightMm, fill: PRINT_COLORS.ink100 }),
+      );
+    }
+    rowsGroup.appendChild(
+      svgEl('line', {
+        x1: MARGIN_MM,
+        y1: y + rowHeightMm,
+        x2: pageWidthMm - MARGIN_MM,
+        y2: y + rowHeightMm,
+        stroke: PRINT_COLORS.line,
+        'stroke-width': 0.15,
+      }),
+    );
+    rowsGroup.appendChild(tableRowCells(task, calendar, y, rowHeightMm, summaryRow, milestone, depth, tableColumns, tileIndex));
+
+    const pos = layout.get(task.uid)!;
+    const barGroup = svgEl('g', { 'clip-path': `url(#${clipId})` });
+    const critical = showCriticalPath && Boolean(task.isCritical);
+    if (milestone) {
+      barGroup.appendChild(milestoneMark(pos.x, y, rowHeightMm, critical, task.name));
+    } else if (summaryRow) {
+      barGroup.appendChild(summaryBarMark(pos.x, y, pos.width, rowHeightMm));
+    } else {
+      const color = task.colorKey ? colorByKey.get(task.colorKey) : undefined;
+      barGroup.appendChild(taskBarMark(pos.x, y, pos.width, rowHeightMm, color, task.percentComplete, critical));
+    }
+    rowsGroup.appendChild(barGroup);
+  });
+
+  const arrowsGroup = svgEl('g', { 'clip-path': `url(#${clipId})` });
+  const byUid = new Map(tasks.map((t) => [t.uid, t]));
+  tasks.forEach((task) => {
+    const succPos = layout.get(task.uid);
+    if (!succPos) return;
+    // Los capítulos derivan sus fechas de sus hijos: sus propias predecesoras no afectan el
+    // cálculo, así que tampoco deben dibujarse (evita flechas "fantasma" sin efecto real).
+    if (isSummaryTask(tasks, task.uid)) return;
+    task.predecessors.forEach((pred) => {
+      const predTask = byUid.get(pred.taskUid);
+      const predPos = layout.get(pred.taskUid);
+      if (!predTask || !predPos) return;
+      const critical = showCriticalPath && Boolean(task.isCritical) && Boolean(predTask.isCritical);
+      arrowsGroup.appendChild(arrowPath(pred.type, predPos, succPos, rowHeightMm, critical));
+    });
+  });
+  rowsGroup.appendChild(arrowsGroup);
+
+  svg.appendChild(rowsGroup);
+  svg.appendChild(footerGroup(meta, pageWidthMm, pageHeightMm, tileIndex, tileCount));
+
+  return svg;
+}
+
+function arrowMarker(id: string, color: string) {
+  return svgEl('marker', { id, markerWidth: 6, markerHeight: 6, refX: 4.5, refY: 2.25, orient: 'auto' }, [
+    svgEl('path', { d: 'M0,0 L4.5,2.25 L0,4.5 Z', fill: color }),
+  ]);
+}
+
+function headerGroup(meta: ProjectMeta, summary: ProjectSummary, calendar: CalendarConfig, pageWidthMm: number) {
+  const g = svgEl('g');
+  g.appendChild(textEl(MARGIN_MM, MARGIN_MM + 6, meta.title || 'Cronograma de obra', {
+    'font-size': 6.5,
+    'font-weight': 700,
+    fill: PRINT_COLORS.ink900,
+    'font-family': 'Arial, sans-serif',
+  }));
+  const subtitle = [meta.client, meta.location].filter(Boolean).join('  ·  ');
+  if (subtitle) {
+    g.appendChild(
+      textEl(MARGIN_MM, MARGIN_MM + 12, subtitle, {
+        'font-size': 3.4,
+        fill: PRINT_COLORS.ink500,
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+  }
+
+  const plazoLabel = summary.startDate
+    ? calendar.workOnWeekends
+      ? `${summary.totalCalendarDays} días corridos`
+      : `${summary.totalWorkDays} días hábiles (${summary.totalCalendarDays} corridos)`
+    : '—';
+
+  g.appendChild(
+    textEl(pageWidthMm - MARGIN_MM, MARGIN_MM + 6, `Plazo total: ${plazoLabel}`, {
+      'font-size': 3.8,
+      'font-weight': 700,
+      fill: PRINT_COLORS.ink900,
+      'text-anchor': 'end',
+      'font-family': 'Arial, sans-serif',
+    }),
+  );
+  if (summary.startDate) {
+    g.appendChild(
+      textEl(pageWidthMm - MARGIN_MM, MARGIN_MM + 11, `${summary.startDate} al ${summary.endDate}`, {
+        'font-size': 3.2,
+        fill: PRINT_COLORS.ink500,
+        'text-anchor': 'end',
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+  }
+
+  g.appendChild(
+    svgEl('line', {
+      x1: MARGIN_MM,
+      y1: MARGIN_MM + HEADER_HEIGHT_MM,
+      x2: pageWidthMm - MARGIN_MM,
+      y2: MARGIN_MM + HEADER_HEIGHT_MM,
+      stroke: PRINT_COLORS.ink900,
+      'stroke-width': 0.5,
+    }),
+  );
+  return g;
+}
+
+/** Un clipPath por columna (reusado en todas las filas) para que el texto se corte exactamente
+ * en el borde real de la columna, sin depender de una estimación de ancho de caracteres. */
+function columnClipPaths(columns: TableColumn[], tileIndex: number, rowsTop: number, availableRowsHeight: number) {
+  let x = MARGIN_MM;
+  return columns.map((col) => {
+    const clip = svgEl('clipPath', { id: columnClipId(col.key, tileIndex) }, [
+      svgEl('rect', { x, y: rowsTop, width: Math.max(col.width - 1, 1), height: availableRowsHeight }),
+    ]);
+    x += col.width;
+    return clip;
+  });
+}
+
+function columnClipId(key: string, tileIndex: number): string {
+  return `col-clip-${key}-${tileIndex}`;
+}
+
+function tableHeaderRow(y: number, columns: TableColumn[]) {
+  const g = svgEl('g');
+  let x = MARGIN_MM;
+  for (const col of columns) {
+    g.appendChild(
+      textEl(x + 1, y + 4.5, col.label, {
+        'font-size': 3,
+        'font-weight': 700,
+        fill: PRINT_COLORS.ink700,
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+    x += col.width;
+  }
+  g.appendChild(
+    svgEl('line', { x1: MARGIN_MM, y1: y + TABLE_HEADER_HEIGHT_MM, x2: x, y2: y + TABLE_HEADER_HEIGHT_MM, stroke: PRINT_COLORS.lineStrong, 'stroke-width': 0.3 }),
+  );
+  return g;
+}
+
+function tableRowCells(
+  task: Task,
+  calendar: CalendarConfig,
+  y: number,
+  rowHeight: number,
+  summaryRow: boolean,
+  milestone: boolean,
+  depth: number,
+  columns: TableColumn[],
+  tileIndex: number,
+) {
+  const g = svgEl('g');
+  const fontSize = Math.min(3.2, rowHeight * 0.55);
+  const textY = y + rowHeight / 2 + fontSize * 0.35;
+  let x = MARGIN_MM;
+
+  const values: Record<string, string> = {
+    id: task.id,
+    name: task.name,
+    qty: task.quantity !== undefined ? task.quantity.toLocaleString('es-AR') : '',
+    unit: task.unit ?? '',
+    dur: (summaryRow ? spanDays(task.startDate, task.endDate, calendar) : task.durationDays).toLocaleString('es-AR'),
+    start: format(parseISODate(task.startDate), 'dd/MM/yy'),
+    end: format(parseISODate(task.endDate), 'dd/MM/yy'),
+  };
+
+  for (const col of columns) {
+    const isNameCol = col.key === 'name';
+    const indent = isNameCol ? depth * 2.5 : 0;
+    const milestoneMarkWidth = isNameCol && milestone ? 3 : 0;
+    const raw = values[col.key] ?? '';
+    const cellGroup = svgEl('g', { 'clip-path': `url(#${columnClipId(col.key, tileIndex)})` });
+    if (isNameCol && milestone) {
+      const dotSize = fontSize * 0.6;
+      const cx = x + 1 + indent + dotSize / 2;
+      cellGroup.appendChild(
+        svgEl('rect', {
+          x: cx - dotSize / 2,
+          y: textY - dotSize * 0.9,
+          width: dotSize,
+          height: dotSize,
+          fill: PRINT_COLORS.ink900,
+          transform: `rotate(45 ${cx} ${textY - dotSize * 0.4})`,
+        }),
+      );
+    }
+    const cellFontSize = fitFontSize(raw, col.width - indent - milestoneMarkWidth - 1, fontSize);
+    cellGroup.appendChild(
+      textEl(x + 1 + indent + milestoneMarkWidth, textY, raw, {
+        'font-size': cellFontSize,
+        'font-weight': summaryRow && isNameCol ? 700 : 400,
+        fill: PRINT_COLORS.ink900,
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+    g.appendChild(cellGroup);
+    x += col.width;
+  }
+  return g;
+}
+
+function monthBands(startISO: string, endISO: string, mmPerDay: number) {
+  const bands: { label: string; x: number; width: number }[] = [];
+  let cursor = parseISODate(startISO);
+  const end = parseISODate(endISO);
+  while (cursor <= end) {
+    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+    const visibleStart = monthStart < parseISODate(startISO) ? parseISODate(startISO) : monthStart;
+    const visibleEnd = monthEnd > end ? end : monthEnd;
+    const x = daysBetween(startISO, formatISODate(visibleStart)) * mmPerDay;
+    const widthDays = Math.round((visibleEnd.getTime() - visibleStart.getTime()) / 86400000) + 1;
+    bands.push({ label: format(monthStart, 'MMM yyyy'), x, width: widthDays * mmPerDay });
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+  return bands;
+}
+
+function timeScaleGroup(
+  originX: number,
+  y: number,
+  widthMm: number,
+  heightMm: number,
+  startISO: string,
+  endISO: string,
+  mmPerDay: number,
+) {
+  const g = svgEl('g');
+  g.appendChild(svgEl('rect', { x: originX, y, width: widthMm, height: heightMm, fill: PRINT_COLORS.surface, stroke: PRINT_COLORS.line, 'stroke-width': 0.2 }));
+
+  for (const band of monthBands(startISO, endISO, mmPerDay)) {
+    g.appendChild(
+      textEl(originX + band.x + 1, y + 3.5, band.label, {
+        'font-size': 2.6,
+        'font-weight': 700,
+        fill: PRINT_COLORS.ink700,
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+  }
+
+  let cursor = parseISODate(startISO);
+  while (getISODay(cursor) !== 1) cursor = addDays(cursor, 1);
+  const end = parseISODate(endISO);
+  while (cursor <= end) {
+    const iso = formatISODate(cursor);
+    const x = originX + daysBetween(startISO, iso) * mmPerDay;
+    g.appendChild(svgEl('line', { x1: x, y1: y + 3.8, x2: x, y2: y + heightMm, stroke: PRINT_COLORS.line, 'stroke-width': 0.15 }));
+    g.appendChild(
+      textEl(x + 0.5, y + heightMm - 1, `S${getISOWeek(cursor)} · ${format(cursor, 'dd/MM')}`, {
+        'font-size': 2.2,
+        fill: PRINT_COLORS.ink500,
+        'font-family': 'Arial, sans-serif',
+      }),
+    );
+    cursor = addDays(cursor, 7);
+  }
+  return g;
+}
+
+function weekendBandsGroup(originX: number, y: number, heightMm: number, startISO: string, endISO: string, mmPerDay: number, clipId: string) {
+  const g = svgEl('g', { 'clip-path': `url(#${clipId})` });
+  let cursor = parseISODate(startISO);
+  const end = parseISODate(endISO);
+  while (cursor <= end) {
+    const day = cursor.getDay();
+    if (day === 0 || day === 6) {
+      const x = originX + daysBetween(startISO, formatISODate(cursor)) * mmPerDay;
+      g.appendChild(svgEl('rect', { x, y, width: mmPerDay, height: heightMm, fill: PRINT_COLORS.gridWeekend }));
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return g;
+}
+
+function taskBarMark(x: number, y: number, width: number, rowHeight: number, color: string | undefined, percent: number, critical: boolean) {
+  const inset = rowHeight * 0.18;
+  const barHeight = rowHeight - inset * 2;
+  const fill = color ?? PRINT_COLORS.ink300;
+  const g = svgEl('g');
+  g.appendChild(
+    svgEl('rect', {
+      x,
+      y: y + inset,
+      width,
+      height: barHeight,
+      rx: barHeight * 0.3,
+      fill,
+      'fill-opacity': 0.5,
+      stroke: critical ? PRINT_COLORS.accentCritical : PRINT_COLORS.ink700,
+      'stroke-width': critical ? 0.6 : 0.2,
+    }),
+  );
+  const progressWidth = (Math.min(100, Math.max(0, percent)) / 100) * width;
+  if (progressWidth > 0) {
+    g.appendChild(svgEl('rect', { x, y: y + inset, width: progressWidth, height: barHeight, rx: barHeight * 0.3, fill }));
+  }
+  return g;
+}
+
+function summaryBarMark(x: number, y: number, width: number, rowHeight: number) {
+  const top = y + rowHeight * 0.25;
+  const thickness = rowHeight * 0.22;
+  const capH = rowHeight * 0.3;
+  const capW = rowHeight * 0.22;
+  const g = svgEl('g');
+  g.appendChild(svgEl('rect', { x, y: top, width, height: thickness, fill: PRINT_COLORS.ink900 }));
+  g.appendChild(svgEl('polygon', { points: `${x},${top + thickness} ${x + capW},${top + thickness} ${x},${top + thickness + capH}`, fill: PRINT_COLORS.ink900 }));
+  g.appendChild(
+    svgEl('polygon', {
+      points: `${x + width},${top + thickness} ${x + width - capW},${top + thickness} ${x + width},${top + thickness + capH}`,
+      fill: PRINT_COLORS.ink900,
+    }),
+  );
+  return g;
+}
+
+function milestoneMark(x: number, y: number, rowHeight: number, critical: boolean, label: string) {
+  const size = rowHeight * 0.5;
+  const cy = y + rowHeight / 2;
+  const g = svgEl('g');
+  g.appendChild(
+    svgEl('rect', {
+      x: x - size / 2,
+      y: cy - size / 2,
+      width: size,
+      height: size,
+      fill: critical ? PRINT_COLORS.accentCritical : PRINT_COLORS.ink900,
+      transform: `rotate(45 ${x} ${cy})`,
+    }),
+  );
+  g.appendChild(
+    textEl(x + size, cy + 1, label, { 'font-size': 3, fill: PRINT_COLORS.ink900, 'font-family': 'Arial, sans-serif' }),
+  );
+  return g;
+}
+
+const STUB_MM = 3;
+
+function elbowPath(sx: number, sy: number, tx: number, ty: number, exitRight: boolean): string {
+  const midX = exitRight ? Math.max(sx + STUB_MM, tx - STUB_MM) : Math.min(sx - STUB_MM, tx + STUB_MM);
+  return `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${tx} ${ty}`;
+}
+
+function arrowPath(type: LinkType, predPos: BarLayout, succPos: BarLayout, rowHeight: number, critical: boolean) {
+  const exitRight = type === 'FS' || type === 'FF';
+  const enterLeft = type === 'FS' || type === 'SS';
+  const sx = exitRight ? predPos.x + predPos.width : predPos.x;
+  const sy = predPos.y + rowHeight / 2;
+  const tx = enterLeft ? succPos.x : succPos.x + succPos.width;
+  const ty = succPos.y + rowHeight / 2;
+  return svgEl('path', {
+    d: elbowPath(sx, sy, tx, ty, exitRight),
+    fill: 'none',
+    stroke: critical ? PRINT_COLORS.accentCritical : PRINT_COLORS.ink500,
+    'stroke-width': critical ? 0.5 : 0.25,
+    'marker-end': critical ? 'url(#export-arrow-critical)' : 'url(#export-arrow)',
+  });
+}
+
+function footerGroup(meta: ProjectMeta, pageWidthMm: number, pageHeightMm: number, tileIndex: number, tileCount: number) {
+  const y = pageHeightMm - MARGIN_MM;
+  const g = svgEl('g');
+  g.appendChild(svgEl('line', { x1: MARGIN_MM, y1: y - FOOTER_HEIGHT_MM + 3, x2: pageWidthMm - MARGIN_MM, y2: y - FOOTER_HEIGHT_MM + 3, stroke: PRINT_COLORS.line, 'stroke-width': 0.2 }));
+  g.appendChild(
+    textEl(MARGIN_MM, y, meta.title || 'Cronograma de obra', { 'font-size': 2.8, fill: PRINT_COLORS.ink500, 'font-family': 'Arial, sans-serif' }),
+  );
+  g.appendChild(
+    textEl(pageWidthMm / 2, y, `Hoja ${tileIndex + 1} de ${tileCount}`, {
+      'font-size': 2.8,
+      fill: PRINT_COLORS.ink500,
+      'text-anchor': 'middle',
+      'font-family': 'Arial, sans-serif',
+    }),
+  );
+  g.appendChild(
+    textEl(pageWidthMm - MARGIN_MM, y, `Emitido ${format(new Date(), 'dd/MM/yyyy')}`, {
+      'font-size': 2.8,
+      fill: PRINT_COLORS.ink500,
+      'text-anchor': 'end',
+      'font-family': 'Arial, sans-serif',
+    }),
+  );
+  return g;
+}

@@ -1,0 +1,46 @@
+.gantt-scroll {
+  overflow: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: none;
+}
+
+.gantt-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: block;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.gantt-body {
+  display: block;
+}
+
+.gantt-month-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: var(--ink-700);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.gantt-tick-label {
+  font-size: 10px;
+  fill: var(--ink-500);
+}
+
+.gantt-tick-sublabel {
+  font-size: 9px;
+  fill: var(--ink-300);
+}
+
+.gantt-milestone-label {
+  font-size: 11px;
+  fill: var(--ink-900);
+}
+
+.gantt-bar-group {
+  cursor: pointer;
+}

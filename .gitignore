@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+
+# Config local de Claude Code / rutas específicas de esta máquina, no del proyecto
+.claude/
