@@ -5,8 +5,23 @@ export const HEADER_HEIGHT_MM = 20;
 export const FOOTER_HEIGHT_MM = 9;
 export const TABLE_HEADER_HEIGHT_MM = 7;
 export const TIMESCALE_HEADER_HEIGHT_MM = 9;
-export const MM_PER_DAY = 4;
 export const GUTTER_MM = 4;
+
+/** Unidad de las columnas del Gantt impreso: cuanto mayor la unidad, más compacto el cronograma. */
+export type TimeScaleUnit = 'day' | 'week' | 'month';
+
+export const TIME_SCALE_LABELS: Record<TimeScaleUnit, string> = {
+  day: 'Días',
+  week: 'Semanas',
+  month: 'Meses',
+};
+
+/** mm de hoja por día calendario en cada escala (semana ≈ 9,8 mm, mes ≈ 13,7 mm). */
+export const MM_PER_DAY_BY_SCALE: Record<TimeScaleUnit, number> = {
+  day: 4,
+  week: 1.4,
+  month: 0.45,
+};
 
 /** Presupuesto fijo en mm para la tabla, independiente del ancho que el usuario le dio a cada
  * columna en pantalla — sólo las proporciones entre columnas se toman de la grilla. */

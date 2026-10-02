@@ -4,8 +4,10 @@ import type { CalendarConfig, ProjectMeta, RubroPaletteEntry } from '../../types
 import type { ColumnKey } from '../../store/useColumnWidths';
 import { buildExportPages, exportProjectPdf } from '../../export/exportPdf';
 import type { PaperSize } from '../../export/pageSizes';
+import { TIME_SCALE_LABELS, type TimeScaleUnit } from '../../export/exportLayout';
 
 const PAPER_SIZES: PaperSize[] = ['A4', 'A3', 'A2', 'A1', 'A0'];
+const TIME_SCALES: TimeScaleUnit[] = ['day', 'week', 'month'];
 
 interface PdfPreviewModalProps {
   tasks: Task[];
@@ -29,14 +31,15 @@ export function PdfPreviewModal({
   onClose,
 }: PdfPreviewModalProps) {
   const [paperSize, setPaperSize] = useState<PaperSize>(initialPaperSize);
+  const [timeScale, setTimeScale] = useState<TimeScaleUnit>('day');
   const [pageIndex, setPageIndex] = useState(0);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { pages } = useMemo(
-    () => buildExportPages({ paperSize, tasks, calendar, palette, meta, showCriticalPath, columnWidths }),
-    [paperSize, tasks, calendar, palette, meta, showCriticalPath, columnWidths],
+    () => buildExportPages({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths }),
+    [paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths],
   );
 
   useEffect(() => {
@@ -57,7 +60,7 @@ export function PdfPreviewModal({
     setDownloading(true);
     setError(null);
     try {
-      await exportProjectPdf({ paperSize, tasks, calendar, palette, meta, showCriticalPath, columnWidths });
+      await exportProjectPdf({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo generar el PDF.');
     } finally {
@@ -88,6 +91,19 @@ export function PdfPreviewModal({
             {PAPER_SIZES.map((size) => (
               <option key={size} value={size}>
                 {size} apaisado
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="export-pdf-select"
+            value={timeScale}
+            onChange={(e) => setTimeScale(e.target.value as TimeScaleUnit)}
+            title="Unidad de las columnas del Gantt: cuanto mayor, más compacto"
+          >
+            {TIME_SCALES.map((unit) => (
+              <option key={unit} value={unit}>
+                Columnas: {TIME_SCALE_LABELS[unit]}
               </option>
             ))}
           </select>

@@ -13,9 +13,11 @@ import {
   TABLE_HEADER_HEIGHT_MM,
   TABLE_WIDTH_MM,
   type TableColumn,
+  type TimeScaleUnit,
 } from './exportLayout';
 import { PRINT_COLORS } from './printColors';
 import { SVG_NS, fitFontSize, svgEl, textEl } from './svgBuilders';
+import type { TimeColumn } from './timeColumns';
 
 export interface BuildPageOptions {
   pageWidthMm: number;
@@ -29,6 +31,9 @@ export interface BuildPageOptions {
   tileCount: number;
   tileStartISO: string;
   tileEndISO: string;
+  /** Columnas de tiempo (días / semanas / meses) que entran en esta hoja. */
+  tileColumns: TimeColumn[];
+  timeScale: TimeScaleUnit;
   ganttAreaWidthMm: number;
   mmPerDay: number;
   showCriticalPath: boolean;
@@ -54,6 +59,8 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
     tileCount,
     tileStartISO,
     tileEndISO,
+    tileColumns,
+    timeScale,
     ganttAreaWidthMm,
     mmPerDay,
     showCriticalPath,
@@ -79,10 +86,14 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: pageWidthMm, height: pageHeightMm, fill: PRINT_COLORS.paper }));
 
   const clipId = `gantt-clip-${tileIndex}`;
+  const headClipId = `gantt-head-clip-${tileIndex}`;
   svg.appendChild(
     svgEl('defs', {}, [
       svgEl('clipPath', { id: clipId }, [
         svgEl('rect', { x: ganttX, y: rowsTop, width: ganttAreaWidthMm, height: availableRowsHeight }),
+      ]),
+      svgEl('clipPath', { id: headClipId }, [
+        svgEl('rect', { x: ganttX, y: headerRowY, width: ganttAreaWidthMm, height: TABLE_HEADER_HEIGHT_MM }),
       ]),
       ...columnClipPaths(tableColumns, tileIndex, rowsTop, availableRowsHeight),
       arrowMarker('export-arrow', PRINT_COLORS.ink500),
@@ -92,12 +103,19 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
 
   svg.appendChild(headerGroup(meta, summary, calendar, pageWidthMm));
   svg.appendChild(tableHeaderRow(headerRowY, tableColumns));
-  svg.appendChild(timeScaleGroup(ganttX, headerRowY, ganttAreaWidthMm, TABLE_HEADER_HEIGHT_MM, tileStartISO, tileEndISO, mmPerDay));
+  svg.appendChild(
+    timeScaleGroup(ganttX, headerRowY, ganttAreaWidthMm, TABLE_HEADER_HEIGHT_MM, tileColumns, timeScale, mmPerDay, headClipId),
+  );
 
-  if (!calendar.workOnWeekends) {
-    svg.appendChild(
-      weekendBandsGroup(ganttX, rowsTop, availableRowsHeight, tileStartISO, tileEndISO, mmPerDay, clipId),
-    );
+  if (timeScale === 'day') {
+    if (!calendar.workOnWeekends) {
+      svg.appendChild(
+        weekendBandsGroup(ganttX, rowsTop, availableRowsHeight, tileStartISO, tileEndISO, mmPerDay, clipId),
+      );
+    }
+  } else {
+    // En semanas / meses una banda de fin de semana sería una línea imperceptible: se marcan los límites de columna.
+    svg.appendChild(columnGridGroup(ganttX, rowsTop, availableRowsHeight, tileColumns, mmPerDay, clipId));
   }
 
   const layout = new Map<string, BarLayout>();
@@ -137,7 +155,7 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
     const barGroup = svgEl('g', { 'clip-path': `url(#${clipId})` });
     const critical = showCriticalPath && Boolean(task.isCritical);
     if (milestone) {
-      barGroup.appendChild(milestoneMark(pos.x, y, rowHeightMm, critical, task.name));
+      barGroup.appendChild(milestoneMark(pos.x, y, rowHeightMm, critical, task.name, ganttX + ganttAreaWidthMm));
     } else if (summaryRow) {
       barGroup.appendChild(summaryBarMark(pos.x, y, pos.width, rowHeightMm));
     } else {
@@ -333,19 +351,25 @@ function tableRowCells(
   return g;
 }
 
-function monthBands(startISO: string, endISO: string, mmPerDay: number) {
-  const bands: { label: string; x: number; width: number }[] = [];
-  let cursor = parseISODate(startISO);
+/** Franjas del encabezado superior (meses, o años cuando las columnas ya son meses), con x relativo al inicio de la hoja. */
+function periodBands(startISO: string, endISO: string, mmPerDay: number, period: 'month' | 'year') {
+  const bands: { label: string; shortLabel: string; x: number; width: number }[] = [];
+  const start = parseISODate(startISO);
   const end = parseISODate(endISO);
+  let cursor = start;
   while (cursor <= end) {
-    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-    const visibleStart = monthStart < parseISODate(startISO) ? parseISODate(startISO) : monthStart;
-    const visibleEnd = monthEnd > end ? end : monthEnd;
-    const x = daysBetween(startISO, formatISODate(visibleStart)) * mmPerDay;
+    const periodStart = period === 'month' ? new Date(cursor.getFullYear(), cursor.getMonth(), 1) : new Date(cursor.getFullYear(), 0, 1);
+    const periodEnd = period === 'month' ? new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0) : new Date(cursor.getFullYear(), 11, 31);
+    const visibleStart = periodStart < start ? start : periodStart;
+    const visibleEnd = periodEnd > end ? end : periodEnd;
     const widthDays = Math.round((visibleEnd.getTime() - visibleStart.getTime()) / 86400000) + 1;
-    bands.push({ label: format(monthStart, 'MMM yyyy'), x, width: widthDays * mmPerDay });
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    bands.push({
+      label: format(periodStart, period === 'month' ? 'MMM yyyy' : 'yyyy'),
+      shortLabel: period === 'month' ? format(periodStart, 'MMM') : '',
+      x: daysBetween(startISO, formatISODate(visibleStart)) * mmPerDay,
+      width: widthDays * mmPerDay,
+    });
+    cursor = period === 'month' ? new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1) : new Date(cursor.getFullYear() + 1, 0, 1);
   }
   return bands;
 }
@@ -355,16 +379,31 @@ function timeScaleGroup(
   y: number,
   widthMm: number,
   heightMm: number,
-  startISO: string,
-  endISO: string,
+  columns: TimeColumn[],
+  unit: TimeScaleUnit,
   mmPerDay: number,
+  clipId: string,
 ) {
   const g = svgEl('g');
   g.appendChild(svgEl('rect', { x: originX, y, width: widthMm, height: heightMm, fill: PRINT_COLORS.surface, stroke: PRINT_COLORS.line, 'stroke-width': 0.2 }));
 
-  for (const band of monthBands(startISO, endISO, mmPerDay)) {
-    g.appendChild(
-      textEl(originX + band.x + 1, y + 3.5, band.label, {
+  const labels = svgEl('g', { 'clip-path': `url(#${clipId})` });
+  g.appendChild(labels);
+
+  const tileStartISO = columns[0].startISO;
+  const tileEndISO = formatISODate(addDays(parseISODate(columns[columns.length - 1].endISO), -1));
+
+  // Franja superior: meses (días / semanas) o años (meses).
+  for (const band of periodBands(tileStartISO, tileEndISO, mmPerDay, unit === 'month' ? 'year' : 'month')) {
+    const bandX = originX + band.x;
+    if (band.x > 0) labels.appendChild(svgEl('line', { x1: bandX, y1: y, x2: bandX, y2: y + 3.8, stroke: PRINT_COLORS.line, 'stroke-width': 0.15 }));
+    // Un mes que apenas asoma en el borde de la hoja no tiene lugar para su rótulo: se acorta o se omite
+    // para que no se pise con el del mes siguiente.
+    const estimatedWidth = (text: string) => text.length * 2.6 * 0.6;
+    const label = band.width - 1 >= estimatedWidth(band.label) ? band.label : band.width - 1 >= estimatedWidth(band.shortLabel) ? band.shortLabel : '';
+    if (!label) continue;
+    labels.appendChild(
+      textEl(bandX + 1, y + 3.5, label, {
         'font-size': 2.6,
         'font-weight': 700,
         fill: PRINT_COLORS.ink700,
@@ -373,21 +412,46 @@ function timeScaleGroup(
     );
   }
 
-  let cursor = parseISODate(startISO);
-  while (getISODay(cursor) !== 1) cursor = addDays(cursor, 1);
-  const end = parseISODate(endISO);
-  while (cursor <= end) {
-    const iso = formatISODate(cursor);
-    const x = originX + daysBetween(startISO, iso) * mmPerDay;
-    g.appendChild(svgEl('line', { x1: x, y1: y + 3.8, x2: x, y2: y + heightMm, stroke: PRINT_COLORS.line, 'stroke-width': 0.15 }));
-    g.appendChild(
-      textEl(x + 0.5, y + heightMm - 1, `S${getISOWeek(cursor)} · ${format(cursor, 'dd/MM')}`, {
-        'font-size': 2.2,
+  // Fila inferior: una etiqueta por columna.
+  const labelY = y + heightMm - 1;
+  for (const col of columns) {
+    const start = parseISODate(col.startISO);
+    const x = originX + daysBetween(tileStartISO, col.startISO) * mmPerDay;
+    const colWidth = col.days * mmPerDay;
+
+    if (unit === 'day') {
+      // Una marca por lunes para separar semanas; el número del día va centrado en su columna.
+      if (getISODay(start) === 1) labels.appendChild(svgEl('line', { x1: x, y1: y + 3.8, x2: x, y2: y + heightMm, stroke: PRINT_COLORS.line, 'stroke-width': 0.15 }));
+      labels.appendChild(
+        textEl(x + colWidth / 2, labelY, format(start, 'd'), {
+          'font-size': 2,
+          'text-anchor': 'middle',
+          fill: PRINT_COLORS.ink500,
+          'font-family': 'Arial, sans-serif',
+        }),
+      );
+      continue;
+    }
+
+    labels.appendChild(svgEl('line', { x1: x, y1: y + 3.8, x2: x, y2: y + heightMm, stroke: PRINT_COLORS.line, 'stroke-width': 0.15 }));
+    labels.appendChild(
+      textEl(x + 0.7, labelY, unit === 'week' ? `S${getISOWeek(start)}` : format(start, 'MMM'), {
+        'font-size': unit === 'week' ? 2 : 2.4,
         fill: PRINT_COLORS.ink500,
         'font-family': 'Arial, sans-serif',
       }),
     );
-    cursor = addDays(cursor, 7);
+  }
+  return g;
+}
+
+/** Líneas verticales tenues en cada límite de columna (semanas / meses). */
+function columnGridGroup(originX: number, y: number, heightMm: number, columns: TimeColumn[], mmPerDay: number, clipId: string) {
+  const g = svgEl('g', { 'clip-path': `url(#${clipId})` });
+  const tileStartISO = columns[0].startISO;
+  for (const col of columns) {
+    const x = originX + daysBetween(tileStartISO, col.startISO) * mmPerDay;
+    g.appendChild(svgEl('line', { x1: x, y1: y, x2: x, y2: y + heightMm, stroke: PRINT_COLORS.line, 'stroke-width': 0.12 }));
   }
   return g;
 }
@@ -449,7 +513,7 @@ function summaryBarMark(x: number, y: number, width: number, rowHeight: number) 
   return g;
 }
 
-function milestoneMark(x: number, y: number, rowHeight: number, critical: boolean, label: string) {
+function milestoneMark(x: number, y: number, rowHeight: number, critical: boolean, label: string, rightEdgeX: number) {
   const size = rowHeight * 0.5;
   const cy = y + rowHeight / 2;
   const g = svgEl('g');
@@ -463,8 +527,16 @@ function milestoneMark(x: number, y: number, rowHeight: number, critical: boolea
       transform: `rotate(45 ${x} ${cy})`,
     }),
   );
+  // Si el rótulo no entra a la derecha del rombo (hito cerca del borde de la hoja), va a su izquierda.
+  const estimatedLabelWidth = label.length * 3 * 0.55;
+  const fitsRight = x + size + estimatedLabelWidth <= rightEdgeX;
   g.appendChild(
-    textEl(x + size, cy + 1, label, { 'font-size': 3, fill: PRINT_COLORS.ink900, 'font-family': 'Arial, sans-serif' }),
+    textEl(fitsRight ? x + size : x - size, cy + 1, label, {
+      'font-size': 3,
+      'text-anchor': fitsRight ? 'start' : 'end',
+      fill: PRINT_COLORS.ink900,
+      'font-family': 'Arial, sans-serif',
+    }),
   );
   return g;
 }

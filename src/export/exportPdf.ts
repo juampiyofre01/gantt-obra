@@ -4,16 +4,24 @@ import type { Task } from '../types/task';
 import type { CalendarConfig, ProjectMeta, RubroPaletteEntry } from '../types/project';
 import type { ColumnKey } from '../store/useColumnWidths';
 import { computeProjectSummary } from '../engine/projectSummary';
-import { addWorkingDays } from '../engine/dateMath';
+import { addDays } from 'date-fns';
+import { formatISODate, parseISODate } from '../engine/dateMath';
 import { computeDateRange } from '../components/gantt/ganttLayout';
 import { buildPageSvg } from './buildExportSvg';
-import { buildTableColumns, GUTTER_MM, MARGIN_MM, MM_PER_DAY, TABLE_WIDTH_MM } from './exportLayout';
+import {
+  buildTableColumns,
+  GUTTER_MM,
+  MARGIN_MM,
+  MM_PER_DAY_BY_SCALE,
+  TABLE_WIDTH_MM,
+  type TimeScaleUnit,
+} from './exportLayout';
 import { PAGE_SIZES_MM, type PaperSize } from './pageSizes';
-
-const RAW_CALENDAR: CalendarConfig = { workOnWeekends: true, holidays: [] };
+import { buildTimeColumns, packTimeColumns } from './timeColumns';
 
 export interface ExportPdfOptions {
   paperSize: PaperSize;
+  timeScale: TimeScaleUnit;
   tasks: Task[];
   calendar: CalendarConfig;
   palette: RubroPaletteEntry[];
@@ -31,41 +39,38 @@ export interface ExportPages {
 /** Builds the vector SVG for every page/tile of the export — the exact same content that gets
  * embedded into the PDF, so it doubles as an accurate print preview. */
 export function buildExportPages(opts: ExportPdfOptions): ExportPages {
-  const { paperSize, tasks, calendar, palette, meta, showCriticalPath, columnWidths } = opts;
+  const { paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths } = opts;
   const page = PAGE_SIZES_MM[paperSize];
   const range = computeDateRange(tasks);
   const summary = computeProjectSummary(tasks, calendar);
   const tableColumns = buildTableColumns(columnWidths);
 
   const ganttAreaWidthMm = page.width - MARGIN_MM * 2 - TABLE_WIDTH_MM - GUTTER_MM;
-  const daysPerTile = Math.max(1, Math.floor(ganttAreaWidthMm / MM_PER_DAY));
-  const tileCount = Math.max(1, Math.ceil(range.totalDays / daysPerTile));
+  const mmPerDay = MM_PER_DAY_BY_SCALE[timeScale];
+  const tiles = packTimeColumns(buildTimeColumns(range.startISO, range.endISO, timeScale), mmPerDay, ganttAreaWidthMm);
 
-  const pages: SVGSVGElement[] = [];
-  for (let i = 0; i < tileCount; i += 1) {
-    const tileStartISO = addWorkingDays(range.startISO, i * daysPerTile, RAW_CALENDAR);
-    const tileEndISO = addWorkingDays(range.startISO, Math.min(range.totalDays, (i + 1) * daysPerTile), RAW_CALENDAR);
-
-    pages.push(
-      buildPageSvg({
-        pageWidthMm: page.width,
-        pageHeightMm: page.height,
-        tasks,
-        calendar,
-        palette,
-        meta,
-        summary,
-        tileIndex: i,
-        tileCount,
-        tileStartISO,
-        tileEndISO,
-        ganttAreaWidthMm,
-        mmPerDay: MM_PER_DAY,
-        showCriticalPath,
-        tableColumns,
-      }),
-    );
-  }
+  const pages = tiles.map((tileColumns, i) =>
+    buildPageSvg({
+      pageWidthMm: page.width,
+      pageHeightMm: page.height,
+      tasks,
+      calendar,
+      palette,
+      meta,
+      summary,
+      tileIndex: i,
+      tileCount: tiles.length,
+      tileStartISO: tileColumns[0].startISO,
+      // endISO de la última columna es exclusivo; el resto del código espera el último día incluido.
+      tileEndISO: formatISODate(addDays(parseISODate(tileColumns[tileColumns.length - 1].endISO), -1)),
+      tileColumns,
+      timeScale,
+      ganttAreaWidthMm,
+      mmPerDay,
+      showCriticalPath,
+      tableColumns,
+    }),
+  );
 
   return { pages, pageWidthMm: page.width, pageHeightMm: page.height };
 }
