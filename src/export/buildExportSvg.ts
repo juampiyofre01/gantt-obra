@@ -38,6 +38,8 @@ export interface BuildPageOptions {
   mmPerDay: number;
   showCriticalPath: boolean;
   tableColumns: TableColumn[];
+  /** Ancho / alto del logo (se asume cuadrado si todavía no se conoce). */
+  logoAspect?: number;
 }
 
 interface BarLayout {
@@ -65,6 +67,7 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
     mmPerDay,
     showCriticalPath,
     tableColumns,
+    logoAspect,
   } = opts;
 
   const colorByKey = new Map(palette.map((p) => [p.key, p.color]));
@@ -101,7 +104,7 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
     ]),
   );
 
-  svg.appendChild(headerGroup(meta, summary, calendar, pageWidthMm));
+  svg.appendChild(headerGroup(meta, summary, calendar, pageWidthMm, logoAspect && logoAspect > 0 ? logoAspect : 1));
   svg.appendChild(tableHeaderRow(headerRowY, tableColumns));
   svg.appendChild(
     timeScaleGroup(ganttX, headerRowY, ganttAreaWidthMm, TABLE_HEADER_HEIGHT_MM, tileColumns, timeScale, mmPerDay, headClipId),
@@ -195,10 +198,43 @@ function arrowMarker(id: string, color: string) {
   ]);
 }
 
-function headerGroup(meta: ProjectMeta, summary: ProjectSummary, calendar: CalendarConfig, pageWidthMm: number) {
+const LOGO_MAX_HEIGHT_MM = 16;
+const LOGO_MAX_WIDTH_MM = 40;
+const LOGO_GAP_MM = 5;
+
+function headerGroup(
+  meta: ProjectMeta,
+  summary: ProjectSummary,
+  calendar: CalendarConfig,
+  pageWidthMm: number,
+  logoAspect: number,
+) {
   const g = svgEl('g');
-  g.appendChild(textEl(MARGIN_MM, MARGIN_MM + 6, meta.title || 'Cronograma de obra', {
-    'font-size': 6.5,
+
+  // Logo del proyecto en la esquina superior izquierda; el texto del encabezado se corre a su derecha.
+  let textX = MARGIN_MM;
+  if (meta.logoDataUrl) {
+    const logoWidth = Math.min(LOGO_MAX_HEIGHT_MM * logoAspect, LOGO_MAX_WIDTH_MM);
+    const logoHeight = logoWidth / logoAspect;
+    g.appendChild(
+      svgEl('image', {
+        href: meta.logoDataUrl,
+        'xlink:href': meta.logoDataUrl,
+        x: MARGIN_MM,
+        y: MARGIN_MM + 1 + (LOGO_MAX_HEIGHT_MM - logoHeight) / 2,
+        width: logoWidth,
+        height: logoHeight,
+        preserveAspectRatio: 'xMinYMid meet',
+      }),
+    );
+    textX = MARGIN_MM + logoWidth + LOGO_GAP_MM;
+  }
+
+  // El bloque de plazo ocupa la derecha (~100 mm): el título se achica si el logo le quita lugar.
+  const title = meta.title || 'Cronograma de obra';
+  const titleFontSize = fitFontSize(title, pageWidthMm - MARGIN_MM - textX - 100, 6.5, 0.6);
+  g.appendChild(textEl(textX, MARGIN_MM + 6, title, {
+    'font-size': titleFontSize,
     'font-weight': 700,
     fill: PRINT_COLORS.ink900,
     'font-family': 'Arial, sans-serif',
@@ -206,7 +242,7 @@ function headerGroup(meta: ProjectMeta, summary: ProjectSummary, calendar: Calen
   const subtitle = [meta.client, meta.location].filter(Boolean).join('  ·  ');
   if (subtitle) {
     g.appendChild(
-      textEl(MARGIN_MM, MARGIN_MM + 12, subtitle, {
+      textEl(textX, MARGIN_MM + 12, subtitle, {
         'font-size': 3.4,
         fill: PRINT_COLORS.ink500,
         'font-family': 'Arial, sans-serif',

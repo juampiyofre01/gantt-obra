@@ -28,6 +28,8 @@ export interface ExportPdfOptions {
   meta: ProjectMeta;
   showCriticalPath: boolean;
   columnWidths: Record<ColumnKey, number>;
+  /** Ancho / alto del logo del proyecto, si tiene uno. */
+  logoAspect?: number;
 }
 
 export interface ExportPages {
@@ -39,7 +41,7 @@ export interface ExportPages {
 /** Builds the vector SVG for every page/tile of the export — the exact same content that gets
  * embedded into the PDF, so it doubles as an accurate print preview. */
 export function buildExportPages(opts: ExportPdfOptions): ExportPages {
-  const { paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths } = opts;
+  const { paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths, logoAspect } = opts;
   const page = PAGE_SIZES_MM[paperSize];
   const range = computeDateRange(tasks);
   const summary = computeProjectSummary(tasks, calendar);
@@ -69,6 +71,7 @@ export function buildExportPages(opts: ExportPdfOptions): ExportPages {
       mmPerDay,
       showCriticalPath,
       tableColumns,
+      logoAspect,
     }),
   );
 

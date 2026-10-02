@@ -5,6 +5,7 @@ import type { ColumnKey } from '../../store/useColumnWidths';
 import { buildExportPages, exportProjectPdf } from '../../export/exportPdf';
 import type { PaperSize } from '../../export/pageSizes';
 import { TIME_SCALE_LABELS, type TimeScaleUnit } from '../../export/exportLayout';
+import { useImageAspect } from '../../utils/useImageAspect';
 
 const PAPER_SIZES: PaperSize[] = ['A4', 'A3', 'A2', 'A1', 'A0'];
 const TIME_SCALES: TimeScaleUnit[] = ['day', 'week', 'month'];
@@ -37,9 +38,11 @@ export function PdfPreviewModal({
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const logoAspect = useImageAspect(meta.logoDataUrl);
+
   const { pages } = useMemo(
-    () => buildExportPages({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths }),
-    [paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths],
+    () => buildExportPages({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths, logoAspect }),
+    [paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths, logoAspect],
   );
 
   useEffect(() => {
@@ -60,7 +63,7 @@ export function PdfPreviewModal({
     setDownloading(true);
     setError(null);
     try {
-      await exportProjectPdf({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths });
+      await exportProjectPdf({ paperSize, timeScale, tasks, calendar, palette, meta, showCriticalPath, columnWidths, logoAspect });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo generar el PDF.');
     } finally {
