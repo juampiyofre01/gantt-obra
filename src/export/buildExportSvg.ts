@@ -5,7 +5,7 @@ import type { ProjectSummary } from '../engine/projectSummary';
 import type { CalendarConfig, ProjectMeta, RubroPaletteEntry } from '../types/project';
 import type { LinkType, Task } from '../types/task';
 import { daysBetween } from '../components/gantt/ganttLayout';
-import { dependencyPath } from '../components/gantt/dependencyRoute';
+import { dependencyPath, type RouteBar } from '../components/gantt/dependencyRoute';
 import {
   FOOTER_HEIGHT_MM,
   GUTTER_MM,
@@ -43,11 +43,7 @@ export interface BuildPageOptions {
   logoAspect?: number;
 }
 
-interface BarLayout {
-  x: number;
-  width: number;
-  y: number;
-}
+type BarLayout = RouteBar;
 
 export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
   const {
@@ -124,10 +120,14 @@ export function buildPageSvg(opts: BuildPageOptions): SVGSVGElement {
 
   const layout = new Map<string, BarLayout>();
   tasks.forEach((t, i) => {
+    const milestone = isMilestoneTask(tasks, t);
     layout.set(t.uid, {
       x: ganttX + daysBetween(tileStartISO, t.startDate) * mmPerDay,
       width: Math.max((daysBetween(t.startDate, t.endDate) + 1) * mmPerDay, 1),
       y: rowsTop + i * rowHeightMm,
+      // Mismas proporciones que taskBarMark() (barra) y milestoneMark() (rombo), para que la flecha toque el dibujo.
+      halfHeight: milestone ? (rowHeightMm * 0.5 * Math.SQRT2) / 2 : rowHeightMm * 0.32,
+      diamond: milestone,
     });
   });
 

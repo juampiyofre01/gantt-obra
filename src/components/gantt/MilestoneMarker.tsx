@@ -1,4 +1,4 @@
-import { ROW_HEIGHT } from './ganttLayout';
+import { MILESTONE_SIZE as SIZE, ROW_HEIGHT } from './ganttLayout';
 
 interface MilestoneMarkerProps {
   x: number;
@@ -7,8 +7,6 @@ interface MilestoneMarkerProps {
   critical?: boolean;
   onClick?: () => void;
 }
-
-const SIZE = 9;
 
 export function MilestoneMarker({ x, y, label, critical, onClick }: MilestoneMarkerProps) {
   const cy = y + ROW_HEIGHT / 2;

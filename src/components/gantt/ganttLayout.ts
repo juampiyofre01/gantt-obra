@@ -12,6 +12,16 @@ export const PX_PER_DAY: Record<ZoomLevel, number> = {
 
 export const ROW_HEIGHT = 30;
 
+/** Margen vertical entre el borde de la fila y la barra de una tarea. */
+export const BAR_INSET = 5;
+/** Distancia del centro de la fila al borde superior / inferior de una barra. */
+export const BAR_HALF_HEIGHT = ROW_HEIGHT / 2 - BAR_INSET;
+
+/** Lado del cuadrado que, girado 45°, forma el rombo de un hito. */
+export const MILESTONE_SIZE = 9;
+/** Distancia del centro del rombo a su vértice superior / inferior. */
+export const MILESTONE_HALF_HEIGHT = (MILESTONE_SIZE * Math.SQRT2) / 2;
+
 export interface DateRange {
   startISO: string;
   endISO: string;

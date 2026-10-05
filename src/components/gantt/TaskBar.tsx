@@ -1,4 +1,4 @@
-import { ROW_HEIGHT } from './ganttLayout';
+import { BAR_INSET, ROW_HEIGHT } from './ganttLayout';
 
 interface TaskBarProps {
   x: number;
@@ -11,7 +11,6 @@ interface TaskBarProps {
   onClick?: () => void;
 }
 
-const BAR_INSET = 5;
 const BAR_HEIGHT = ROW_HEIGHT - BAR_INSET * 2;
 
 export function TaskBar({ x, y, width, color, percent, critical, selected, onClick }: TaskBarProps) {

@@ -4,7 +4,17 @@ import type { Task } from '../../types/task';
 import type { CalendarConfig, RubroPaletteEntry } from '../../types/project';
 import { isMilestoneTask, isSummaryTask } from '../../engine/hierarchy';
 import { formatISODate, parseISODate } from '../../engine/dateMath';
-import { barWidth, computeDateRange, dateToX, PX_PER_DAY, ROW_HEIGHT, type ZoomLevel } from './ganttLayout';
+import {
+  BAR_HALF_HEIGHT,
+  barWidth,
+  computeDateRange,
+  dateToX,
+  MILESTONE_HALF_HEIGHT,
+  PX_PER_DAY,
+  ROW_HEIGHT,
+  type ZoomLevel,
+} from './ganttLayout';
+import type { RouteBar } from './dependencyRoute';
 import { TimeScale } from './TimeScale';
 import { TaskBar } from './TaskBar';
 import { SummaryBar } from './SummaryBar';
@@ -33,12 +43,15 @@ export const GanttChart = forwardRef<HTMLDivElement, GanttChartProps>(function G
   const colorByKey = new Map(palette.map((p) => [p.key, p.color]));
 
   const layout = useMemo(() => {
-    const map = new Map<string, { x: number; width: number; y: number }>();
+    const map = new Map<string, RouteBar>();
     tasks.forEach((t, i) => {
+      const milestone = isMilestoneTask(tasks, t);
       map.set(t.uid, {
         x: dateToX(t.startDate, range, pxPerDay),
         width: barWidth(t.startDate, t.endDate, pxPerDay),
         y: i * ROW_HEIGHT,
+        halfHeight: milestone ? MILESTONE_HALF_HEIGHT : BAR_HALF_HEIGHT,
+        diamond: milestone,
       });
     });
     return map;
