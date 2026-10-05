@@ -1,25 +1,15 @@
 import type { Task } from '../../types/task';
 import { isSummaryTask } from '../../engine/hierarchy';
+import { dependencyPath, type RouteBar } from './dependencyRoute';
 import { ROW_HEIGHT } from './ganttLayout';
-
-interface BarLayout {
-  x: number;
-  width: number;
-  y: number;
-}
 
 interface DependencyArrowsProps {
   tasks: Task[];
-  layout: Map<string, BarLayout>;
+  layout: Map<string, RouteBar>;
   showCriticalPath: boolean;
 }
 
 const STUB = 14;
-
-function elbowPath(sx: number, sy: number, tx: number, ty: number, exitRight: boolean): string {
-  const midX = exitRight ? Math.max(sx + STUB, tx - STUB) : Math.min(sx - STUB, tx + STUB);
-  return `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${tx} ${ty}`;
-}
 
 export function DependencyArrows({ tasks, layout, showCriticalPath }: DependencyArrowsProps) {
   const byUid = new Map(tasks.map((t) => [t.uid, t]));
@@ -35,15 +25,8 @@ export function DependencyArrows({ tasks, layout, showCriticalPath }: Dependency
       const predPos = layout.get(pred.taskUid);
       if (!predTask || !predPos) return [];
 
-      const exitRight = pred.type === 'FS' || pred.type === 'FF';
-      const enterLeft = pred.type === 'FS' || pred.type === 'SS';
-      const sx = exitRight ? predPos.x + predPos.width : predPos.x;
-      const sy = predPos.y + ROW_HEIGHT / 2;
-      const tx = enterLeft ? succPos.x : succPos.x + succPos.width;
-      const ty = succPos.y + ROW_HEIGHT / 2;
-
       const critical = showCriticalPath && task.isCritical && predTask.isCritical;
-      const d = elbowPath(sx, sy, tx, ty, exitRight);
+      const d = dependencyPath(pred.type, predPos, succPos, ROW_HEIGHT, STUB);
 
       return [
         <path

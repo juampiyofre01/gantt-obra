@@ -5,6 +5,7 @@ import type { ProjectSummary } from '../engine/projectSummary';
 import type { CalendarConfig, ProjectMeta, RubroPaletteEntry } from '../types/project';
 import type { LinkType, Task } from '../types/task';
 import { daysBetween } from '../components/gantt/ganttLayout';
+import { dependencyPath } from '../components/gantt/dependencyRoute';
 import {
   FOOTER_HEIGHT_MM,
   GUTTER_MM,
@@ -579,20 +580,9 @@ function milestoneMark(x: number, y: number, rowHeight: number, critical: boolea
 
 const STUB_MM = 3;
 
-function elbowPath(sx: number, sy: number, tx: number, ty: number, exitRight: boolean): string {
-  const midX = exitRight ? Math.max(sx + STUB_MM, tx - STUB_MM) : Math.min(sx - STUB_MM, tx + STUB_MM);
-  return `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${tx} ${ty}`;
-}
-
 function arrowPath(type: LinkType, predPos: BarLayout, succPos: BarLayout, rowHeight: number, critical: boolean) {
-  const exitRight = type === 'FS' || type === 'FF';
-  const enterLeft = type === 'FS' || type === 'SS';
-  const sx = exitRight ? predPos.x + predPos.width : predPos.x;
-  const sy = predPos.y + rowHeight / 2;
-  const tx = enterLeft ? succPos.x : succPos.x + succPos.width;
-  const ty = succPos.y + rowHeight / 2;
   return svgEl('path', {
-    d: elbowPath(sx, sy, tx, ty, exitRight),
+    d: dependencyPath(type, predPos, succPos, rowHeight, STUB_MM),
     fill: 'none',
     stroke: critical ? PRINT_COLORS.accentCritical : PRINT_COLORS.ink500,
     'stroke-width': critical ? 0.5 : 0.25,
